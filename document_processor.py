@@ -28,16 +28,37 @@ class DocumentProcessor:
         self.initialize_index()
 
     def initialize_index(self):
-        """Init or LOAD existing FAISS index"""
+        """Initialize or load existing FAISS index"""
         dimension = self.embedding_model.get_sentence_embedding_dimension()
         self.index = faiss.IndexFlatL2(dimension)
 
-        # Load existing chunks and update index if needed
-        if os.path.exists(os.path.join(self.embeddings_dir, "chunks.npy")):
-            self.document_chunks = np.load(os.path.join(self.embeddings_dir), allow_pickle=True).tolist()
-            embeddings = np.load(os.path.join(self.embeddings_dir, "embeddings.npy"))
+        # Load existing chunks and update index
+        chunks_path = os.path.join(self.embeddings_dir, "chunks.npy")
+        embeddings_path = os.path.join(self.embeddings_dir, "embeddings.npy")
+
+        if os.path.exists(chunks_path) and os.path.exists(embeddings_path):
+            # Load document chunks
+            self.document_chunks = np.load(chunks_path, allow_pickle=True).tolist()
+
+            # Load embeddings
+            embeddings = np.load(embeddings_path)
+
+            # FAISS requires embeddings as float32 numpy array
             if len(embeddings) > 0:
-                self.index.add(embeddings)
+                # Make sure embeddings are in the right format (float32)
+                embeddings = embeddings.astype(np.float32)
+
+                # FAISS expects the number of vectors and the vectors separately in some versions
+                # But in most recent versions, just passing the array works
+                try:
+                    # Modern FAISS approach
+                    self.index.add(embeddings)
+                except TypeError:
+                    # Older FAISS versions may require this syntax
+                    n = embeddings.shape[0]  # Number of vectors
+                    self.index.add(n, faiss.swig_ptr(embeddings))
+
+                print(f"Loaded {len(embeddings)} embeddings into the index")
 
 
     def load_document(self, file_path: str) -> List[Dict[str, Any]]:
@@ -81,4 +102,70 @@ class DocumentProcessor:
         return result
 
     def process_document(self, file_path: str) -> None:
-        pass
+        """Process a document and add it to the index"""
+
+        doc_name = os.path.basename(file_path)
+        doc_path = os.path.join(self.docs_dir, doc_name)  # Copy doc and add it to documents directory
+
+        # Skip processing if same file exists
+        if os.path.exists(doc_path):
+            print(f"Document {doc_name} exists already. Skipping...")
+            return
+
+        # Copy file
+        import shutil
+        shutil.copy2(file_path, doc_path)
+
+        # Load and chunk document
+        chunks = self.load_document(doc_path)
+
+        # Create embeddings
+        texts = [chunk["content"] for chunk in chunks]
+        embeddings = self.embedding_model.encode(texts)
+
+        # Add to index
+        if len(chunks) > 0:
+            self.index.add(embeddings)
+            self.document_chunks.extend(chunks)
+
+            # Save updated index and chunks
+            self.save_index()
+
+    def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Search for relevant document chunks"""
+        query_embedding = self.embedding_model.encode([query])
+        scores, indices = self.index.search(query_embedding, top_k)
+
+        results = []
+        for i, idx in enumerate(indices[0]):
+            idx = int(idx)
+            if idx < len(self.document_chunks) and idx >= 0:
+                result = self.document_chunks[idx].copy()
+                result["score"] = float(scores[0][i])
+                results.append(result)
+
+        return results
+
+    def save_index(self) -> None:
+        """Save the index and document chunks to disk"""
+        if len(self.document_chunks) > 0:
+            # Extract all embeddings
+            texts = [chunk["content"] for chunk in self.document_chunks]
+            embeddings = self.embedding_model.encode(texts)
+
+            # Save embeddings and chunks
+            np.save(os.path.join(self.embeddings_dir, "embeddings.npy"), embeddings)
+            np.save(os.path.join(self.embeddings_dir, "chunks.npy"), self.document_chunks)
+            print(f"Saved {len(self.document_chunks)} document chunks")
+
+
+# Example usage
+if __name__ == "__main__":
+    processor = DocumentProcessor()
+    # Process a document
+    processor.process_document("example_data/Siddarth_Singotam_CV-17-12-2024.pdf")
+    # Search
+    results = processor.search("What is the architecture?")
+    for result in results:
+        print(f"Score: {result['score']}, Source: {result['metadata']['document_name']}")
+        print(result['content'][:200] + "...\n")
