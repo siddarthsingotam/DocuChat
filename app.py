@@ -15,7 +15,10 @@ def get_document_processor():
 def get_llm_handler():
     api_key = st.session_state.get("api_key", "")
     if not api_key:
-        return None
+        try:
+            return LLMHandler()
+        except ValueError:
+            return None
     try:
         return LLMHandler(api_key=api_key)
     except ValueError:
@@ -31,7 +34,7 @@ with st.sidebar:
     st.header("Settings")
 
     # API Key input
-    api_key = st.text_input("OpenAI API Key", type="password", key="api_key_input")
+    api_key = st.text_input("OpenAI API Key (Optional - uses configured key if blank)", type="password", key="api_key_input")
     if api_key:
         st.session_state["api_key"] = api_key
 

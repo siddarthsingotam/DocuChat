@@ -9,7 +9,7 @@ dotenv_path = "environment/keys.env"
 load_dotenv(dotenv_path=dotenv_path)
 
 MODEL="gpt-4o-mini"
-OPEN_API_KEY= os.getenv("OPEN_AI_API_KEY_2")
+OPEN_API_KEY=os.getenv("OPEN_AI_API_KEY_3")
 
 class LLMHandler:
     def __init__(self, api_key=None, model=MODEL):
